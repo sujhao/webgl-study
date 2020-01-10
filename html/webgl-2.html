@@ -1,0 +1,212 @@
+<!-- Licensed under a BSD license. See license.html for license -->
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>WebGL - Study</title>
+    <!-- <link type="text/css" href="./webgl-tutorials.css" rel="stylesheet" /> -->
+
+
+    <style>
+        canvas {
+            /*控制画布大小的css*/
+            background-color: #fff;
+            border: 1px solid black;
+            /* NOTE: This size is changed if in iframe - see below '.iframe canvas' */
+            width: 1280px;
+            height: 720px;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="haoCanvas"></canvas>
+</body>
+
+</html>
+<!--
+for most samples webgl-utils only provides shader compiling/linking and
+canvas resizing because why clutter the examples with code that's the same in every sample.
+See http://webglfundamentals.org/webgl/lessons/webgl-boilerplate.html
+and http://webglfundamentals.org/webgl/lessons/webgl-resizing-the-canvas.html
+for webgl-utils, m3, m4, and webgl-lessons-ui.
+-->
+<script src="./webgl-utils.js"></script>
+
+<!--顶点着色器   顶点着色器的作用是计算顶点的位置。-->
+<script id="2d-vertex-shader" type="notjs">
+
+  // 一个属性变量，将会从缓冲中获取数据
+  attribute vec4 a_position;
+  uniform vec2 u_resolution;   //全局变量（Uniforms）
+
+  // 所有着色器都有一个main方法
+  void main() {
+    // convert the position from pixels to 0.0 to 1.0
+    vec2 zeroToOne = a_position.xy / u_resolution;
+
+    // convert from 0->1 to 0->2
+    vec2 zeroToTwo = zeroToOne * 2.0;
+
+    // convert from 0->2 to -1->+1 (clipspace)
+    vec2 clipSpace = zeroToTwo - 1.0;
+
+    //print("hello 我是顶点着色器");
+
+    //gl_Position = vec4(clipSpace, 0, 1);
+    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+  }
+</script>
+
+<!--片断着色器 片断着色器的作用是计算出当前绘制图元中每个像素的颜色值。-->
+<script id="2d-fragment-shader" type="notjs">
+  precision mediump float;
+  void main() {
+    gl_FragColor = vec4(1, 0, 0.5, 1); // 返回“瑞迪施紫色”    
+  }
+
+</script>
+<script>
+    "use strict";
+
+    // 创建着色器方法，输入参数：渲染上下文，着色器类型，数据源
+    function createShader(gl, type, source) {
+        var shader = gl.createShader(type); // 创建着色器对象
+        gl.shaderSource(shader, source); // 提供数据源
+        gl.compileShader(shader); // 编译 -> 生成着色器
+        var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+        if (success) {
+            console.log("createShader suc=", shader);
+            return shader;
+        }
+        console.warn("createShader error=", gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+    }
+
+    function createProgram(gl, vertexShader, fragmentShader) {
+        var program = gl.createProgram();  //创建一个着色程序
+        gl.attachShader(program, vertexShader);   //顶点着色器加入程序 
+        gl.attachShader(program, fragmentShader);//片段着色器加入程序 
+        gl.linkProgram(program); //链接
+        var success = gl.getProgramParameter(program, gl.LINK_STATUS);
+        if (success) {
+            console.log("createProgram suc=", success, program);
+            return program;
+        }
+        console.log("createProgram error=", gl.getProgramInfoLog(program));
+        gl.deleteProgram(program);
+    }
+
+    function main() {
+        // 获得一个画布
+        var canvas = document.getElementById("haoCanvas");
+        //我们创建一个WebGL渲染上下文（WebGLRenderingContext）
+        var gl = canvas.getContext("webgl");
+        if (!gl) {
+            // 你不能使用WebGL！
+            console.warn("你不能使用WebGL！")
+            return;
+        }
+
+        // Get the strings for our GLSL shaders
+        //可以理解为获得顶点着色器的C代码
+        var vertexShaderSource = document.getElementById("2d-vertex-shader").text;
+        //可以理解为获得片段着色器的C代码
+        var fragmentShaderSource = document.getElementById("2d-fragment-shader").text;
+
+        // create GLSL shaders, upload the GLSL source, compile the shaders
+        //创建编译顶点着色器
+        var vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        //创建编译片元着色器
+        var fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        //然后我们将这两个着色器 link（链接）到一个 program（着色程序）
+        var program = createProgram(gl, vertexShader, fragmentShader);
+
+        //现在我们已经在GPU上创建了一个GLSL着色程序，我们还需要给它提供数据。 
+        //在这里GLSL着色程序的唯一输入是一个属性值a_position    
+        //我们要做的第一件事就是从刚才创建的GLSL着色程序中找到这个属性值所在的位置。
+        // look up where the vertex data needs to go.
+        var positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+
+        // look up uniform locations
+        var resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
+
+        // Create a buffer and put three 2d clip space points in it
+        //属性值从缓冲中获取数据，所以我们创建一个缓冲
+        var positionBuffer = gl.createBuffer();
+
+        //WebGL可以通过绑定点操控全局范围内的许多数据，
+        //你可以把绑定点想象成一个WebGL内部的全局变量。
+        // 首先绑定一个数据源到绑定点，然后可以引用绑定点指向该数据源。
+        // 所以让我们来绑定位置信息缓冲（下面的绑定点就是ARRAY_BUFFER）。
+        // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+
+        var positions = [
+            // 10, 20,
+            // 80, 20,
+            // 10, 30,
+            // 10, 30,
+            // 80, 20,
+            // 80, 30,
+            10, 20,
+            80, 20,
+            10, 30,
+            100, 300,
+            100, 800,
+            800, 800,
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+        //在此之上的代码是 初始化代码。这些代码在页面加载时只会运行一次。 接下来的代码是渲染代码，
+        //在绘制之前我们应该调整画布（canvas）的尺寸以匹配它的显示尺寸。画布就像图片一样有两个尺寸。 一个是它拥有的实际像素个数，另一个是它显示的大小
+        //CSS决定画布显示的大小。 你应该尽可能用CSS设置所需画布大小 ，因为它比其它方式灵活的多。
+        webglUtils.resizeCanvasToDisplaySize(gl.canvas); //让显示尺寸跟画布大小一样
+
+        //我们需要告诉WebGL怎样把提供的gl_Position裁剪空间坐标对应到画布像素坐标， 
+        //通常我们也把画布像素坐标叫做屏幕空间。为了实现这个目的，我们只需要调用gl.viewport 方法并传递画布的当前尺寸。
+        //这样就告诉WebGL裁剪空间的 -1 -> +1 分别对应到x轴的 0 -> gl.canvas.width 和y轴的 0 -> gl.canvas.height。
+        //即上面有说到webgl的位置为-1到1，中间是0
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+        //// 清空画布
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // 告诉它用我们之前写好的着色程序（一个着色器对）
+        gl.useProgram(program);
+
+        //接下来我们需要告诉WebGL怎么从我们之前准备的缓冲中获取数据给着色器中的属性。 首先我们需要启用对应属性
+        gl.enableVertexAttribArray(positionAttributeLocation);
+
+        // 将绑定点绑定到缓冲数据（positionBuffer）
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+
+        // 告诉属性怎么从positionBuffer中读取数据 (ARRAY_BUFFER)
+        var size = 2;             // 每次迭代运行提取两个单位数据
+        var type = gl.FLOAT;   // 每个单位的数据类型是32位浮点型
+        var normalize = false; // 不需要归一化数据
+        var stride = 0;        // 0 = 移动单位数量 * 每个单位占用内存（sizeof(type)）
+        // 每次迭代运行运动多少内存到下一个数据开始点
+        var offset = 0;         // 从缓冲起始位置开始读取
+        gl.vertexAttribPointer(
+            positionAttributeLocation, size, type, normalize, stride, offset);
+
+        // set the resolution
+        gl.uniform2f(resolutionUniformLocation, gl.canvas.width, gl.canvas.height);
+
+        // draw
+        var primitiveType = gl.TRIANGLES;
+        var offset = 0;
+        var count = 6;
+        gl.drawArrays(primitiveType, offset, count);
+    }
+
+    main();
+</script>
